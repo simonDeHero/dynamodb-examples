@@ -117,7 +117,8 @@ public class VendorListenerLogic {
         String latestTs = latestTimeStamp.toString();
 
         // only add such vendors if not already existing
-        // TODO ??? but what if it was actually deleted due to a more up-to-date queue message? then it should not be added
+        // TODO ??? but what if it was actually deleted due to a more up-to-date queue message? then it should not be added.
+        //  don't know, if the deletion was more recent, as we don't have its timestamp
         DynamoDBSaveExpression saveExpression = new DynamoDBSaveExpression()
                 .withExpected(Map.of(
                         "pVIDgK", new ExpectedAttributeValue(false),
