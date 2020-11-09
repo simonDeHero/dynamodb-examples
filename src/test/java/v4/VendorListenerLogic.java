@@ -1,12 +1,17 @@
 package v4;
 
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
+import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBDeleteExpression;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMapper;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMapperConfig;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBQueryExpression;
+import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBSaveExpression;
 import com.amazonaws.services.dynamodbv2.datamodeling.PaginatedQueryList;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
+import com.amazonaws.services.dynamodbv2.model.ComparisonOperator;
 import com.amazonaws.services.dynamodbv2.model.ConditionalCheckFailedException;
+import com.amazonaws.services.dynamodbv2.model.ConditionalOperator;
+import com.amazonaws.services.dynamodbv2.model.ExpectedAttributeValue;
 
 import java.time.Instant;
 import java.util.Map;
@@ -53,7 +58,7 @@ public class VendorListenerLogic {
      * in TX
      * - only write (PUT, UPDATE, DELETE) or read (GET) - no mix
      */
-    public void update(Set<Vendor> latestVendorsForRvid, String rVID, Instant timestamp) {
+    public void update(Set<Vendor> latestVendorsForRvid, String rVID, Instant latestTimeStamp) {
 
         DynamoDBQueryExpression<Vendor> gsiQuery = new DynamoDBQueryExpression<Vendor>()
                 .withIndexName("rVIDGsi")
@@ -64,52 +69,159 @@ public class VendorListenerLogic {
         existingVendors.loadAllResults();
 
         // all which are existing in table, but not in set
-        Set<Vendor> vendorsToDelete = existingVendors.stream()
+        Set<Vendor> existingVendorsToDelete = existingVendors.stream()
                 .filter(existingVendor -> latestVendorsForRvid.stream()
                         .noneMatch(latestVendor -> latestVendor.getHashKey().equals(existingVendor.getHashKey())))
                 .collect(Collectors.toSet());
 
         // all which are existing in set, but not in table
-        Set<Vendor> vendorsToAdd = latestVendorsForRvid.stream()
+        Set<Vendor> queueMessageVendorsToAdd = latestVendorsForRvid.stream()
                 .filter(latestVendor -> existingVendors.stream()
                         .noneMatch(existingVendor -> latestVendor.getHashKey().equals(existingVendor.getHashKey())))
                 .collect(Collectors.toSet());
 
         // all which are existing in both
-        Set<Vendor> vendorsToUpdate = existingVendors.stream()
+        Set<Vendor> existingVendorsToUpdate = existingVendors.stream()
                 .filter(existingVendor -> latestVendorsForRvid.stream()
                         .anyMatch(latestVendor -> latestVendor.getHashKey().equals(existingVendor.getHashKey())))
                 .collect(Collectors.toSet());
 
-        handleDeletions(vendorsToDelete, timestamp);
-        handleUpdates(vendorsToUpdate, timestamp);
-        handleAdditions(vendorsToAdd, timestamp);
+        handleDeletions_versioning(existingVendorsToDelete, latestTimeStamp);
+        handleAdditions_versioning(queueMessageVendorsToAdd, latestTimeStamp);
+        handleUpdates_versioning(existingVendorsToUpdate, latestTimeStamp);
+
+        // or without versioning (remove the version annotation from Vendor)
+        handleDeletions_conditional(existingVendorsToDelete, latestTimeStamp);
+        handleAdditions_conditional(queueMessageVendorsToAdd, latestTimeStamp);
+        handleUpdates_conditional(existingVendorsToUpdate, latestTimeStamp);
     }
 
-    private void handleAdditions(Set<Vendor> vendorsToAdd, Instant latestTimestamp) {
+    private void handleDeletions_conditional(Set<Vendor> existingVendorsToDelete, Instant latestTimeStamp) {
 
+        // TODO actually in order to compare, this should be a int, i think
+        String latestTs = latestTimeStamp.toString();
+
+        // only delete such an existing vendor, if older than latest time stamp
+        DynamoDBDeleteExpression deleteExpression = new DynamoDBDeleteExpression()
+                .withConditionExpression("ts < :latestTs")
+                .withExpressionAttributeValues(Map.of(":latestTs", new AttributeValue(latestTs)));
+
+        for (Vendor vendorToDelete : existingVendorsToDelete) {
+            mapper.delete(vendorToDelete, deleteExpression);
+        }
     }
 
-    private void handleUpdates(Set<Vendor> vendorsToUpdate, Instant latestTimestamp) {
+    private void handleAdditions_conditional(Set<Vendor> queueMessageVendorsToAdd, Instant latestTimeStamp) {
 
+        // TODO actually in order to compare, this should be a int, i think
+        String latestTs = latestTimeStamp.toString();
+
+        // only add such vendors if not already existing
+        // TODO ??? but what if it was actually deleted due to a more up-to-date queue message? then it should not be added
+        DynamoDBSaveExpression saveExpression = new DynamoDBSaveExpression()
+                .withExpected(Map.of(
+                        "pVIDgK", new ExpectedAttributeValue(false),
+                        // "ts < :latestTs"
+                        "ts", new ExpectedAttributeValue(new AttributeValue(latestTs)).withComparisonOperator(ComparisonOperator.LT)
+                        ))
+                .withConditionalOperator(ConditionalOperator.OR);
+
+        for (Vendor vendorToAdd : queueMessageVendorsToAdd) {
+            vendorToAdd.setTimestamp(latestTimeStamp);
+            mapper.save(vendorToAdd, saveExpression);
+        }
     }
 
-    private void handleDeletions(Set<Vendor> vendorsToDelete, Instant latestTimestamp) {
+    private void handleUpdates_conditional(Set<Vendor> existingVendorsToUpdate, Instant latestTimeStamp) {
+        // update if timestamp of existing vendor is older. add if not existing
+        // TODO ??? but what if it was actually deleted due to a more up-to-date queue message? then it should not be added
+    }
 
-        for (Vendor vendor : vendorsToDelete) {
+    private void handleDeletions_versioning(Set<Vendor> existingVendorsToDelete, Instant latestTimestamp) {
+
+        for (Vendor vendorToDelete : existingVendorsToDelete) {
+
+            // queue message is outdated
+            if (vendorToDelete.getTimestamp().isAfter(latestTimestamp)) {
+                continue;
+            }
 
             boolean shouldTryAgain = true;
             while (shouldTryAgain) {
                 try {
-                    mapper.delete(vendor);
+                    mapper.delete(vendorToDelete);
                     shouldTryAgain = false;
                 } catch (ConditionalCheckFailedException e) {
                     // optimistic locking case, stale vendor
-                    vendor = mapper.load(vendor, mapperConfigConsistent);
-                    if (vendor == null // vendor was already deleted somehow, nothing to do
-                            || vendor.getTimestamp().isAfter(latestTimestamp) // existing vendor is newer, so deletion is outdated
+                    vendorToDelete = mapper.load(vendorToDelete, mapperConfigConsistent);
+
+                    if (vendorToDelete == null // vendor was already deleted somehow, nothing to do
+                            || vendorToDelete.getTimestamp().isAfter(latestTimestamp) // existing vendor is newer, so deletion is outdated
                     ) {
                         shouldTryAgain = false;
+                    }
+                }
+            }
+        }
+    }
+
+    private void handleAdditions_versioning(Set<Vendor> queueMessageVendorsToAdd, Instant latestTimestamp) {
+
+        for (Vendor vendorToAdd : queueMessageVendorsToAdd) {
+
+            vendorToAdd.setTimestamp(latestTimestamp);
+
+            boolean shouldTryAgain = true;
+            while (shouldTryAgain) {
+                try {
+                    mapper.save(vendorToAdd);
+                    shouldTryAgain = false;
+                } catch (ConditionalCheckFailedException e) {
+                    // optimistic locking case, vendor already exists
+                    Vendor existingVendor = mapper.load(vendorToAdd, mapperConfigConsistent);
+
+                    if (existingVendor == null) {
+                        // has been deleted before the "load". hm, what is more recent? the deletion or the add?
+                        // cannot say, as i don't have timestamp of deletion
+                        // TODO what to do?
+
+                    } else {
+                        if (existingVendor.getTimestamp().isAfter(latestTimestamp)) { // existing vendor is newer, so addition is outdated
+                            shouldTryAgain = false;
+                        } else {
+                            vendorToAdd = existingVendor; // to have current version and be able to "save" without version conflict
+                            vendorToAdd.setTimestamp(latestTimestamp);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void handleUpdates_versioning(Set<Vendor> existingVendorsToUpdate, Instant latestTimestamp) {
+
+        for (Vendor vendorToUpdate : existingVendorsToUpdate) {
+
+            vendorToUpdate.setTimestamp(latestTimestamp);
+
+            boolean shouldTryAgain = true;
+            while (shouldTryAgain) {
+                try {
+                    mapper.save(vendorToUpdate);
+                    shouldTryAgain = false;
+                } catch (ConditionalCheckFailedException e) {
+                    // optimistic locking case, vendor was updated in meantime
+                    vendorToUpdate = mapper.load(vendorToUpdate, mapperConfigConsistent);
+
+                    if (vendorToUpdate == null) {
+                        // has been deleted before the "load". hm, what is more recent? the deletion or the update?
+                        // cannot say, as i don't have timestamp of deletion
+                        // TODO what to do?
+
+                    } else {
+                        if (vendorToUpdate.getTimestamp().isAfter(latestTimestamp)) { // existing vendor is newer, so udpate is outdated
+                            shouldTryAgain = false;
+                        }
                     }
                 }
             }
