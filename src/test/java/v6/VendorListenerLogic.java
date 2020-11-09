@@ -72,17 +72,22 @@ public class VendorListenerLogic {
         existingVendorsToDelete.forEach(transactionWriteRequest::addDelete);
         existingVendorsToUpdate.forEach(v -> {
             v.setTimestamp(latestTimeStamp);
-            transactionWriteRequest.addUpdate(v, new DynamoDBTransactionWriteExpression().withConditionExpression("ts < " + latestTimeStamp)); // better use epoch seconds
+            // only update, if queue message is more recent
+            transactionWriteRequest.addUpdate(v,
+                    new DynamoDBTransactionWriteExpression().withConditionExpression("ts < " + latestTimeStamp)); // better use epoch seconds
         });
         queueMessageVendorsToAdd.forEach(v -> {
-            // TODO convert to vendor
-            v.setTimestamp(latestTimeStamp);
-            transactionWriteRequest.addPut(v, new DynamoDBTransactionWriteExpression().withConditionExpression("attribute_not_exists(pVIDgK)"));
+            // only add the platform vendor, if not yet existing for another rVID
+            v.setTimestamp(latestTimeStamp); // TODO convert the queue message vendor to dynamo db vendor
+            v.setRpsId(rVID);
+            transactionWriteRequest.addPut(v,
+                    new DynamoDBTransactionWriteExpression().withConditionExpression("attribute_not_exists(pVIDgK)"));
         });
         mapper.transactionWrite(transactionWriteRequest);
 
-        // TODO if a TransactionCanceledException happens then a condition was not met. we retry the whole function
-        //  (load, check if update still needed by latestTimeStamp, and try TX). at one point in time, we stop as
-        //  latestTimeStamp is out dated. or we successfully apply the latest data.
+        // TODO if a TransactionCanceledException happens then a condition was not met. either latestTimeStamp is out of date
+        //  or the platform vendor already exists for some other rps vendor. do not retry for both. only retry, if the TX was
+        //  cancelled due to concurrent TX.
+        // TODO think the retry through!
     }
 }

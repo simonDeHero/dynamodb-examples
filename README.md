@@ -19,3 +19,12 @@
     * don't use big TX for "read all vendors for rpsId, delete them and add again according to message" but handle each
     entry on its own (using optimistic locking and the existing and provided timestamps)
     * not finished yet (don't even know, if the approach works)
+* v5
+  * played around with different approaches how to update the vendors in the listener via queue message
+  * versioning, conditional expressions
+  * but each platform vendor singularly
+  * does not look promising
+* v6
+  * TX approach for updating the vendors
+  * all-or-nothing with retries, if TX fails because of 
+  * looks more promising, but still thinking to do
