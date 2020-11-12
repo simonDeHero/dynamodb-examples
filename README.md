@@ -30,3 +30,9 @@
   * TX can fail due to concurrent modification or platform vendor already exists (due to duplicate message or for other 
   rps vendor id) or queue message timestamp outdated
   * looks more promising, but still thinking to do
+* v_final
+  * the final solutions, after talk to colleagues with experience in DynamoDB
+  * orders in 2 tables: not nice and a little more expensive, but ok, as we don't have to adapt OPA business logic and
+  we can just throw away 1 table without further DB adaptions, when we drop the global-key
+  * vendors: don't use a TX, as it supports only 25 items. use some kind of versioning. also keep deleted vendors in
+  order to know their latest change timestamp. if a queue message has a newer "version", just apply (insert or update)
