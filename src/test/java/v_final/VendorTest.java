@@ -7,16 +7,21 @@ import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClientBuilder;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMapper;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBMapperConfig;
+import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBSaveExpression;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBScanExpression;
 import com.amazonaws.services.dynamodbv2.datamodeling.PaginatedScanList;
 import com.amazonaws.services.dynamodbv2.local.main.ServerRunner;
 import com.amazonaws.services.dynamodbv2.local.server.DynamoDBProxyServer;
 import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
+import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.BillingMode;
+import com.amazonaws.services.dynamodbv2.model.ComparisonOperator;
 import com.amazonaws.services.dynamodbv2.model.ConditionalCheckFailedException;
+import com.amazonaws.services.dynamodbv2.model.ConditionalOperator;
 import com.amazonaws.services.dynamodbv2.model.CreateTableRequest;
 import com.amazonaws.services.dynamodbv2.model.CreateTableResult;
 import com.amazonaws.services.dynamodbv2.model.DescribeTableRequest;
+import com.amazonaws.services.dynamodbv2.model.ExpectedAttributeValue;
 import com.amazonaws.services.dynamodbv2.model.GlobalSecondaryIndex;
 import com.amazonaws.services.dynamodbv2.model.KeySchemaElement;
 import com.amazonaws.services.dynamodbv2.model.KeyType;
@@ -30,7 +35,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -98,5 +106,42 @@ public class VendorTest {
         mapper.delete(vendor); // works
 
         assertNull(mapper.load(vendor));
+    }
+
+    @Test
+    public void testAddVendorWithSaveExpression() {
+
+        Vendor vendor = new Vendor("asdf", "LH", "1234", Instant.now(), "some config json");
+        vendor.setTimestamp(Instant.now());
+
+        // first persist, no vendor existing
+        mapper.save(vendor, buildSaveExpression(Instant.now().plusSeconds(30)));
+
+        // just a prove, that "save" also can be used as update in general
+        vendor.setConfig("other config");
+        mapper.save(vendor);
+        Vendor fetchedVendor = mapper.load(vendor);
+        assertEquals(vendor.getTimestamp().truncatedTo(ChronoUnit.SECONDS), fetchedVendor.getTimestamp().truncatedTo(ChronoUnit.SECONDS));
+
+        vendor = mapper.load(Vendor.class, vendor.getHashKey());
+        // given timestamp is newer -> update
+        mapper.save(vendor, buildSaveExpression(Instant.now().plusSeconds(30))); //   <---------- ConditionalCheckFailedException: The conditional request failed  ????
+
+        vendor = mapper.load(Vendor.class, vendor.getHashKey());
+        Vendor finalVendor = vendor;
+        // given timestamp is older -> throw error
+        assertThrows(ConditionalCheckFailedException.class, () -> mapper.save(finalVendor, buildSaveExpression(Instant.now().minusSeconds(30))));
+    }
+
+    private DynamoDBSaveExpression buildSaveExpression(Instant latestTimestamp) {
+        return new DynamoDBSaveExpression()
+                .withExpected(Map.of(
+                        // if not existing yet
+                        "pVIDgK", new ExpectedAttributeValue(false),
+                        // OR new time stamp is newer
+                        "ts", new ExpectedAttributeValue(new AttributeValue(String.valueOf(latestTimestamp.toEpochMilli())))
+                                .withComparisonOperator(ComparisonOperator.LT)
+                ))
+                .withConditionalOperator(ConditionalOperator.OR);
     }
 }

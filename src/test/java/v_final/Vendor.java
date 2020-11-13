@@ -5,7 +5,6 @@ import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBHashKey;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBIgnore;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBIndexHashKey;
 import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBTable;
-import com.amazonaws.services.dynamodbv2.datamodeling.DynamoDBVersionAttribute;
 
 import java.time.Instant;
 
@@ -78,12 +77,12 @@ public class Vendor {
     }
 
     @DynamoDBAttribute(attributeName = "ts")
-    public String getCreatedAt() {
-        return timestamp.toString();
+    public long getTs() {
+        return timestamp.toEpochMilli();
     }
 
-    public void setCreatedAt(String createdAt) {
-        timestamp = Instant.parse(createdAt);
+    public void setTs(long ts) {
+        timestamp = Instant.ofEpochMilli(ts);
     }
 
     @DynamoDBHashKey(attributeName = "pVIDgK")
