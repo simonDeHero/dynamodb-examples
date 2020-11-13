@@ -126,14 +126,18 @@ public class VendorTest {
 
         Vendor vendor = new Vendor("asdf", "LH", "1234", Instant.now(), "some config json");
 
+        Instant now = Instant.now();
+        Instant newer = Instant.now().plusSeconds(30);
+        Instant outdated = Instant.now().minusSeconds(30);
+
         // first persist, no vendor existing
-        mapper.save(vendor, buildSaveExpression(Instant.now().plusSeconds(30)));
+        mapper.save(vendor, buildSaveExpression(now));
 
         // given timestamp is newer -> update
-        mapper.save(vendor, buildSaveExpression(Instant.now().plusSeconds(60))); //   <---------- ConditionalCheckFailedException: The conditional request failed  ????
+        mapper.save(vendor, buildSaveExpression(newer)); //   <---------- ConditionalCheckFailedException: The conditional request failed  ????
 
         // given timestamp is older -> throw error
-        assertThrows(ConditionalCheckFailedException.class, () -> mapper.save(vendor, buildSaveExpression(Instant.now().minusSeconds(30))));
+        assertThrows(ConditionalCheckFailedException.class, () -> mapper.save(vendor, buildSaveExpression(outdated)));
     }
 
     private DynamoDBSaveExpression buildSaveExpression(Instant latestTimestamp) {
