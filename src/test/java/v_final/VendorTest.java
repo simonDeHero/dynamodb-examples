@@ -35,7 +35,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -109,28 +108,32 @@ public class VendorTest {
     }
 
     @Test
-    public void testAddVendorWithSaveExpression() {
+    public void testSaveCanBothInsertAndUpdate() {
 
         Vendor vendor = new Vendor("asdf", "LH", "1234", Instant.now(), "some config json");
-        vendor.setTimestamp(Instant.now());
+
+        mapper.save(vendor);
+        assertEquals(vendor.getConfig(), mapper.load(vendor).getConfig());
+
+        Vendor updatedVendor = new Vendor("asdf", "LH", "1234", Instant.now(), "other config");
+        mapper.save(updatedVendor);
+
+        assertEquals(updatedVendor.getConfig(), mapper.load(updatedVendor).getConfig());
+    }
+
+    @Test
+    public void testInsertUpdateVendorWithSaveExpression() {
+
+        Vendor vendor = new Vendor("asdf", "LH", "1234", Instant.now(), "some config json");
 
         // first persist, no vendor existing
         mapper.save(vendor, buildSaveExpression(Instant.now().plusSeconds(30)));
 
-        // just a prove, that "save" also can be used as update in general
-        vendor.setConfig("other config");
-        mapper.save(vendor);
-        Vendor fetchedVendor = mapper.load(vendor);
-        assertEquals(vendor.getTimestamp().truncatedTo(ChronoUnit.SECONDS), fetchedVendor.getTimestamp().truncatedTo(ChronoUnit.SECONDS));
-
-        vendor = mapper.load(Vendor.class, vendor.getHashKey());
         // given timestamp is newer -> update
-        mapper.save(vendor, buildSaveExpression(Instant.now().plusSeconds(30))); //   <---------- ConditionalCheckFailedException: The conditional request failed  ????
+        mapper.save(vendor, buildSaveExpression(Instant.now().plusSeconds(60))); //   <---------- ConditionalCheckFailedException: The conditional request failed  ????
 
-        vendor = mapper.load(Vendor.class, vendor.getHashKey());
-        Vendor finalVendor = vendor;
         // given timestamp is older -> throw error
-        assertThrows(ConditionalCheckFailedException.class, () -> mapper.save(finalVendor, buildSaveExpression(Instant.now().minusSeconds(30))));
+        assertThrows(ConditionalCheckFailedException.class, () -> mapper.save(vendor, buildSaveExpression(Instant.now().minusSeconds(30))));
     }
 
     private DynamoDBSaveExpression buildSaveExpression(Instant latestTimestamp) {
