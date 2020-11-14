@@ -68,11 +68,11 @@ public class VendorListenerLogic {
     /*
     the vendors are found by rVID, but they are updated by hashkey (pVID, gK). so if we get a exception, due to outdated,
     we just skip. otherwise the platform vendor is added (if not existing) or updated (if existing) according to the
-    given info, which must be correct, as it is more up-to-date.
+    given info, which must be correct, as it is newer.
      */
     private void handleModifications(Set<Vendor> vendorsToModify, Instant eventTimeStamp, String rVID, String deleted) {
 
-        // TODO actually in order to compare, this should be a int, i think
+        // TODO store as epoch millis as it uses less storage
         String ets = eventTimeStamp.toString();
 
         DynamoDBSaveExpression saveExpression = new DynamoDBSaveExpression()
@@ -87,7 +87,7 @@ public class VendorListenerLogic {
                 vendor.setDeleted(deleted);
                 vendor.setTimestamp(eventTimeStamp);
 
-                // if not existing, it adds it. if existing, it updates it.
+                // if not existing, insert. if existing, update.
                 mapper.save(vendor, saveExpression);
 
             } catch (ConditionalCheckFailedException e) {

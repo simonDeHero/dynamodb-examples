@@ -131,22 +131,24 @@ public class VendorTest {
         Instant past = Instant.now().minusSeconds(30);
 
         // first persist, no vendor existing
-        mapper.save(vendor, onlyChangeIfNotExistingOrOutdated(now));
+        mapper.save(vendor, ifNotExistingOrOutdated(now));
 
         // given timestamp is newer -> update
-        mapper.save(vendor, onlyChangeIfNotExistingOrOutdated(future)); //   <---------- ConditionalCheckFailedException: The conditional request failed  ????
+        mapper.save(vendor, ifNotExistingOrOutdated(future));
 
         // given timestamp is older -> throw error
-        assertThrows(ConditionalCheckFailedException.class, () -> mapper.save(vendor, onlyChangeIfNotExistingOrOutdated(past)));
+        assertThrows(ConditionalCheckFailedException.class, () -> mapper.save(vendor, ifNotExistingOrOutdated(past)));
     }
 
-    private DynamoDBSaveExpression onlyChangeIfNotExistingOrOutdated(Instant latestTimestamp) {
+    private DynamoDBSaveExpression ifNotExistingOrOutdated(Instant latestTimestamp) {
         return new DynamoDBSaveExpression()
                 .withExpected(Map.of(
                         // if not existing yet
                         "pVIDgK", new ExpectedAttributeValue(false),
                         // OR new time stamp is newer
-                        "ts", new ExpectedAttributeValue(new AttributeValue(String.valueOf(latestTimestamp.toEpochMilli())))
+                        "ts", new ExpectedAttributeValue(
+                                // type of attribute value should be "number" (although it is given as String)
+                                new AttributeValue().withN(String.valueOf(latestTimestamp.toEpochMilli())))
                                 .withComparisonOperator(ComparisonOperator.LT)
                 ))
                 .withConditionalOperator(ConditionalOperator.OR);
