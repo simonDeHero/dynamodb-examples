@@ -166,11 +166,12 @@ public class VendorTest {
     @Test
     public void testConcurrencyForOnePlatformVendor() throws Exception {
 
+        int numberOfMessages = 100;
+
         Instant now = Instant.now();
         Random random = new Random(1234567890);
         Vendor mostRecentVendor = null;
         ArrayList<Vendor> vendors = new ArrayList<>();
-        int numberOfMessages = 100;
         for (int i = 0; i < numberOfMessages; i++) {
             Instant ts;
             if (random.nextDouble() > 0.5) {
@@ -187,12 +188,16 @@ public class VendorTest {
 
         int concurrentThreads = 4;
         ExecutorService executorService = new ScheduledThreadPoolExecutor(concurrentThreads);
+
         CountDownLatch threadsReady = new CountDownLatch(concurrentThreads);
         CountDownLatch threadsStart = new CountDownLatch(1);
         CountDownLatch threadsFinished = new CountDownLatch(vendors.size());
+
         VendorListenerLogic vendorListenerLogic = new VendorListenerLogic(client);
+
         vendors.forEach(v -> executorService.submit(new VendorModification(v, vendorListenerLogic, threadsReady,
                 threadsStart, threadsFinished)));
+
         threadsReady.await();
         threadsStart.countDown();
         threadsFinished.await();
