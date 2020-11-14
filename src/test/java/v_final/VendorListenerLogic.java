@@ -9,6 +9,7 @@ import com.amazonaws.services.dynamodbv2.datamodeling.PaginatedQueryList;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.ComparisonOperator;
 import com.amazonaws.services.dynamodbv2.model.ConditionalCheckFailedException;
+import com.amazonaws.services.dynamodbv2.model.ConditionalOperator;
 import com.amazonaws.services.dynamodbv2.model.ExpectedAttributeValue;
 
 import java.time.Instant;
@@ -59,10 +60,44 @@ public class VendorListenerLogic {
                         .anyMatch(latestVendor -> latestVendor.getHashKey().equals(existingVendor.getHashKey())))
                 .collect(Collectors.toSet());
 
-        handleModifications(existingVendorsToDelete, eventTimeStamp, rVID, "true");
-        handleModifications(existingVendorsToUpdate, eventTimeStamp, rVID, "false");
+        handleUpdates(existingVendorsToUpdate, latestVendorsForRvid, eventTimeStamp, rVID);
+
         // these vendors to add are actually not of type `Vendor`, but the type from the queue message!
-        handleModifications(queueMessageVendorsToAdd, eventTimeStamp, rVID, "false");
+        handleAddOrDelete(queueMessageVendorsToAdd, eventTimeStamp, rVID, "false");
+        handleAddOrDelete(existingVendorsToDelete, eventTimeStamp, rVID, "true");
+    }
+
+    private void handleUpdates(Set<Vendor> existingVendorsToUpdate, Set<Vendor> latestVendorsForRvid,
+                               Instant eventTimeStamp, String rVID) {
+
+        String ets = String.valueOf(eventTimeStamp.toEpochMilli());
+
+        DynamoDBSaveExpression saveExpression = new DynamoDBSaveExpression()
+                .withExpected(Map.of("ts", new ExpectedAttributeValue(new AttributeValue().withN(ets))
+                        .withComparisonOperator(ComparisonOperator.LT)));
+
+        for (Vendor vendor : existingVendorsToUpdate) {
+
+            Vendor latestVendor = latestVendorsForRvid.stream()
+                    .filter(v -> vendor.getHashKey().equals(v.getHashKey())).findFirst().get();
+
+            try {
+                vendor.setRpsId(rVID);
+                vendor.setDeleted("false");
+                vendor.setTimestamp(eventTimeStamp);
+                vendor.setConfig(latestVendor.getConfig());
+
+                // if not existing, insert. if existing, update.
+                mapper.save(vendor, saveExpression);
+
+                System.out.println(Thread.currentThread().getName() + " : successful update");
+
+            } catch (ConditionalCheckFailedException e) {
+                // queue message outdated, skip
+//                System.out.println(Thread.currentThread().getName()
+//                        + " : update failed, latest vendor older than existing one");
+            }
+        }
     }
 
     /*
@@ -70,15 +105,20 @@ public class VendorListenerLogic {
     we just skip. otherwise the platform vendor is added (if not existing) or updated (if existing) according to the
     given info, which must be correct, as it is newer.
      */
-    private void handleModifications(Set<Vendor> vendorsToModify, Instant eventTimeStamp, String rVID, String deleted) {
+    private void handleAddOrDelete(Set<Vendor> vendorsToModify, Instant eventTimeStamp, String rVID, String deleted) {
 
-        // TODO store as epoch millis as it uses less storage
-        String ets = eventTimeStamp.toString();
+        String ets = String.valueOf(eventTimeStamp.toEpochMilli());
 
         DynamoDBSaveExpression saveExpression = new DynamoDBSaveExpression()
-                // only if event time stamp newer
-                .withExpected(Map.of("ts", new ExpectedAttributeValue(new AttributeValue(ets))
-                        .withComparisonOperator(ComparisonOperator.LT)));
+                .withExpected(Map.of(
+                        // if not existing yet
+                        "pVIDgK", new ExpectedAttributeValue(false),
+                        // OR new time stamp is newer
+                        "ts", new ExpectedAttributeValue(
+                                // type of attribute value should be "number" (although it is given as String)
+                                new AttributeValue().withN(ets)).withComparisonOperator(ComparisonOperator.LT)
+                ))
+                .withConditionalOperator(ConditionalOperator.OR);
 
         for (Vendor vendor : vendorsToModify) {
 
@@ -90,8 +130,12 @@ public class VendorListenerLogic {
                 // if not existing, insert. if existing, update.
                 mapper.save(vendor, saveExpression);
 
+                System.out.println(Thread.currentThread().getName() + " : successful add/delete");
+
             } catch (ConditionalCheckFailedException e) {
                 // queue message outdated, skip
+//                System.out.println(Thread.currentThread().getName()
+//                        + " : add/delete failed, latest vendor older than existing one");
             }
         }
     }

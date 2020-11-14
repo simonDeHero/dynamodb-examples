@@ -34,5 +34,7 @@
   * the final solutions, after talk to colleagues with experience in DynamoDB
   * orders in 2 tables: not nice and a little more expensive, but ok, as we don't have to adapt OPA business logic and
   we can just throw away 1 table without further DB adaptions, when we drop the global-key
-  * vendors: don't use a TX, as it supports only 25 items. use some kind of versioning. also keep deleted vendors in
-  order to know their latest change timestamp. if a queue message has a newer "version", just apply (insert or update)
+  * vendors
+    * don't use a TX, as it supports only 25 items. use some kind of versioning. also keep deleted vendors in
+      order to know their latest change timestamp. if a queue message has a newer "version", just apply (insert or update)
+    * (concurrent) tests with conditional expressions based on timestamps, as a kind of versioning/optimistic locking

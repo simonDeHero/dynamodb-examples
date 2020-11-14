@@ -35,7 +35,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -152,5 +159,77 @@ public class VendorTest {
                                 .withComparisonOperator(ComparisonOperator.LT)
                 ))
                 .withConditionalOperator(ConditionalOperator.OR);
+    }
+
+    // later try with e.g. 3 to 5 platform vendors for multiple physical vendor. do adds, updates and deletes.
+    // also try to assign a platform vendor to another physical vendor.
+    @Test
+    public void testConcurrencyForOnePlatformVendor() throws Exception {
+
+        Instant now = Instant.now();
+        Random random = new Random(1234567890);
+        Vendor mostRecentVendor = null;
+        ArrayList<Vendor> vendors = new ArrayList<>();
+        int numberOfMessages = 100;
+        for (int i = 0; i < numberOfMessages; i++) {
+            Instant ts;
+            if (random.nextDouble() > 0.5) {
+                ts = now.plusMillis(random.nextInt(1000));
+            } else {
+                ts = now.minusMillis(random.nextInt(1000));
+            }
+            Vendor vendor = new Vendor("asdf", "LH", "1234", ts, UUID.randomUUID().toString());
+            if (mostRecentVendor == null || vendor.getTs() > mostRecentVendor.getTs()) {
+                mostRecentVendor = vendor;
+            }
+            vendors.add(vendor);
+        }
+
+        int concurrentThreads = 4;
+        ExecutorService executorService = new ScheduledThreadPoolExecutor(concurrentThreads);
+        CountDownLatch threadsReady = new CountDownLatch(concurrentThreads);
+        CountDownLatch threadsStart = new CountDownLatch(1);
+        CountDownLatch threadsFinished = new CountDownLatch(vendors.size());
+        VendorListenerLogic vendorListenerLogic = new VendorListenerLogic(client);
+        vendors.forEach(v -> executorService.submit(new VendorModification(v, vendorListenerLogic, threadsReady,
+                threadsStart, threadsFinished)));
+        threadsReady.await();
+        threadsStart.countDown();
+        threadsFinished.await();
+
+        Vendor vendor = mapper.load(Vendor.class, mostRecentVendor.getHashKey());
+        assertEquals(mostRecentVendor.getTs(), vendor.getTs());
+        assertEquals(mostRecentVendor.getConfig(), vendor.getConfig());
+    }
+
+    private static class VendorModification implements Runnable {
+
+        private final Vendor vendor;
+        private final VendorListenerLogic vendorListenerLogic;
+        private final CountDownLatch threadsReady;
+        private final CountDownLatch threadsStart;
+        private final CountDownLatch threadsFinished;
+
+        public VendorModification(Vendor vendor, VendorListenerLogic vendorListenerLogic, CountDownLatch threadsReady,
+                                  CountDownLatch threadsStart, CountDownLatch threadsFinished) {
+            this.vendor = vendor;
+            this.vendorListenerLogic = vendorListenerLogic;
+            this.threadsReady = threadsReady;
+            this.threadsStart = threadsStart;
+            this.threadsFinished = threadsFinished;
+        }
+
+        @Override
+        public void run() {
+            threadsReady.countDown();
+            try {
+                threadsStart.await();
+                vendorListenerLogic.update(Set.of(vendor), vendor.getRpsId(), vendor.getTimestamp());
+            } catch (Exception e) {
+                System.out.println(Thread.currentThread().getName() + " : exception in thread: " + e);
+            } finally {
+                threadsFinished.countDown();
+            }
+        }
     }
 }
