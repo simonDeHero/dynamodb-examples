@@ -43,6 +43,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -166,7 +167,7 @@ public class VendorTest {
     @Test
     public void testConcurrencyForOnePlatformVendor() throws Exception {
 
-        int numberOfMessages = 100;
+        int numberOfMessages = 1000;
 
         Instant now = Instant.now();
         Random random = new Random(1234567890);
@@ -201,6 +202,8 @@ public class VendorTest {
         threadsReady.await();
         threadsStart.countDown();
         threadsFinished.await();
+
+        executorService.awaitTermination(10, TimeUnit.SECONDS);
 
         Vendor vendor = mapper.load(Vendor.class, mostRecentVendor.getHashKey());
         assertEquals(mostRecentVendor.getTs(), vendor.getTs());

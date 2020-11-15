@@ -55,20 +55,19 @@ public class VendorListenerLogic {
                 .collect(Collectors.toSet());
 
         // all which are existing in both
-        Set<Vendor> existingVendorsToUpdate = existingVendors.stream()
-                .filter(existingVendor -> latestVendorsForRvid.stream()
-                        .anyMatch(latestVendor -> latestVendor.getHashKey().equals(existingVendor.getHashKey())))
+        Set<Vendor> queueMessageVendorsToUpdate = latestVendorsForRvid.stream()
+                .filter(latestVendor -> existingVendors.stream()
+                        .anyMatch(existingVendor -> latestVendor.getHashKey().equals(existingVendor.getHashKey())))
                 .collect(Collectors.toSet());
 
-        handleUpdates(existingVendorsToUpdate, latestVendorsForRvid, eventTimeStamp, rVID);
+        handleUpdates(queueMessageVendorsToUpdate, eventTimeStamp, rVID);
 
         // these vendors to add are actually not of type `Vendor`, but the type from the queue message!
         handleAddOrDelete(queueMessageVendorsToAdd, eventTimeStamp, rVID, "false");
         handleAddOrDelete(existingVendorsToDelete, eventTimeStamp, rVID, "true");
     }
 
-    private void handleUpdates(Set<Vendor> existingVendorsToUpdate, Set<Vendor> latestVendorsForRvid,
-                               Instant eventTimeStamp, String rVID) {
+    private void handleUpdates(Set<Vendor> queueMessageVendorsToUpdate, Instant eventTimeStamp, String rVID) {
 
         String ets = String.valueOf(eventTimeStamp.toEpochMilli());
 
@@ -76,16 +75,12 @@ public class VendorListenerLogic {
                 .withExpected(Map.of("ts", new ExpectedAttributeValue(new AttributeValue().withN(ets))
                         .withComparisonOperator(ComparisonOperator.LT)));
 
-        for (Vendor vendor : existingVendorsToUpdate) {
-
-            Vendor latestVendor = latestVendorsForRvid.stream()
-                    .filter(v -> vendor.getHashKey().equals(v.getHashKey())).findFirst().get();
+        for (Vendor vendor : queueMessageVendorsToUpdate) {
 
             try {
                 vendor.setRpsId(rVID);
                 vendor.setDeleted("false");
                 vendor.setTimestamp(eventTimeStamp);
-                vendor.setConfig(latestVendor.getConfig());
 
                 // if not existing, insert. if existing, update.
                 mapper.save(vendor, saveExpression);
@@ -111,7 +106,7 @@ public class VendorListenerLogic {
 
         DynamoDBSaveExpression saveExpression = new DynamoDBSaveExpression()
                 .withExpected(Map.of(
-                        // if not existing yet
+                        // if not existing yet (needed for initial saves/adds! if not existing, then the "ts" check fails!)
                         "pVIDgK", new ExpectedAttributeValue(false),
                         // OR new time stamp is newer
                         "ts", new ExpectedAttributeValue(
@@ -130,7 +125,7 @@ public class VendorListenerLogic {
                 // if not existing, insert. if existing, update.
                 mapper.save(vendor, saveExpression);
 
-                System.out.println(Thread.currentThread().getName() + " : successful add/delete");
+                System.out.println(Thread.currentThread().getName() + " : successful add/delete (or implicit update)");
 
             } catch (ConditionalCheckFailedException e) {
                 // queue message outdated, skip

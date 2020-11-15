@@ -38,3 +38,44 @@
     * don't use a TX, as it supports only 25 items. use some kind of versioning. also keep deleted vendors in
       order to know their latest change timestamp. if a queue message has a newer "version", just apply (insert or update)
     * (concurrent) tests with conditional expressions based on timestamps, as a kind of versioning/optimistic locking
+* in general
+  * no distinction between eventual and strong consistency reads IMO, as we only have 1 DynamoDB node (i "think") and so all reads are
+  always strong consistent (eventual consistent would be, if we would read from slave, which may not have the latest data yet)
+
+# Costs (eu01-prd01-opa)
+* https://calculator.s3.amazonaws.com/index.html
+* 370K orders per day -> 11 millions per month
+* ~300 relation changes in last 2 days -> 150 per day -> 4500 per month
+* db.r5.large, 30GB storage
+## Aurora
+**~ 1 instance ~240$ -> reader+writer ~480$**
+## DynamoDB
+* let's say 10GB storage
+* on-demand/pay-per-request
+* per order
+  * 2 item writes in TX (each item <= 1KB)
+  * 1 vendor reader (eventually consistent)
+  * ~ 22 mio writes in TX + 11 mio reads (EC)
+  * 120$
+* vendor relation
+  * calculator only allows millions, so let's say 1 million writes per month (NOT in TX)
+  * **125$**
+
+# Costs (as01-prd01-tw-opa)
+* https://calculator.s3.amazonaws.com/index.html
+* 600K orders per day -> 18 millions per month
+* ~20K relation changes in last 2 days -> 10K per day -> 300K per month
+* db.r5.large, 30GB storage
+## Aurora
+**~ reader+writer ~1000$**
+## DynamoDB
+* let's say 20GB storage
+* on-demand/pay-per-request
+* per order
+  * 2 item writes in TX (each item <= 1KB)
+  * 1 vendor reader (eventually consistent)
+  * ~ 36 mio writes in TX + 18 mio reads (EC)
+  * 290$
+* vendor relation
+  * calculator only allows millions, so let's say 1 million writes per month (NOT in TX)
+  * **295$**
