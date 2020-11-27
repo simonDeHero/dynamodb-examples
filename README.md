@@ -79,3 +79,44 @@
 * vendor relation
   * calculator only allows millions, so let's say 1 million writes per month (NOT in TX)
   * **295$**
+  
+# Costs for OMA (eu01)
+
+## Aurora
+- db.r5.xlarge, 30GB, reader+writer, 100 mio requests -> ~1000$
+
+## Dynamo
+(for 1 resto OD order)
+1. accept order from opa queue (write)
+2. create in hurrier (read + write)
+3. rider assigned (read + write)
+4. ack from vendor (read + write)
+5. accept from vendor (read + write)
+6. picked up (r + w)
+7. delivered (r + w)
+additionally: 1 prepared, 1 near vendor, 1 courier left vendor, 1 near customer, 1 delayed ? (r+w)
+
++ for each change: 
+	- 1 read for platform notification
+	- 1 read for fridge notification
+
+------------ (without retries due to opt lock)
+
+12 reads, 13 writes
+
+------------ (11 mio orders per month)
+
+~130 mio reads, ~140 mio writes
+
+reads must happen in TX. listener triggered by action dispatcher expect, that the data has been persisted!
+
++ polling from clients
+	- newrelic: 6800 RPM * 43800 = 293760000 (300 mio)
+
++ DB debugging calls
+	- number does not matter
+	- which fields are queried?
+
++ item size ~ 5KB ?
+
+====> 2500 $
